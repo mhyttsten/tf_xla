@@ -1,13 +1,8 @@
 /*
-Hello World from XLA directory
-Compiler: NOT_FOUND: could not find registered compiler for platform Host -- check target linkage (hint: try adding tensorflow/compiler/jit:xla_cpu_jit as a dependency)
-LocalClient: NOT_FOUND: could not find registered compiler for platform Host -- check target linkage (hint: try adding tensorflow/compiler/jit:xla_cpu_jit as a dependency)
-XlaBuilder: OK
-Goodbye World from XLA directory
-
-
-
-  These intructions apply for a local macOS build
+  These intructions apply for a local macOS build.
+  On master for repo https://github.com/mhyttsten/tf_xla, most of these operations have already been performed.
+  So when using https://github.com/mhyttsten/tf_xla, the following steps are only required:
+     - 0, 3, 4
 
   0a. Install TensorFlow source build requisites
   0b. $ git clone https://github.com/mhyttsten/tf_xla.git  # Based on tf 2.9 with function tracing enabled for source files
@@ -79,6 +74,11 @@ c_binary(
 
 using namespace std;
 using namespace tensorflow;
+
+// TODO:
+//    - This program will successfully create a CPU Compiler, a LocalClient, and initialize an XlaBuilder
+//      Next steps is to use xlaBuilder to create, compiler, and execute a program.
+//      For example, perform: 1+1 and print the result from a cout
 
 int main(int argc, char* argv[]) {	
 
