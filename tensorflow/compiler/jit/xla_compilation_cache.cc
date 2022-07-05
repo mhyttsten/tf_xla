@@ -240,6 +240,10 @@ limitations under the License.
 #include "tensorflow/core/util/determinism.h"
 #include "tensorflow/core/util/dump_graph.h"
 
+#include<iostream>
+#include <sstream>
+#include <strstream>
+
 namespace tensorflow {
 namespace {
 
@@ -460,6 +464,33 @@ static xla::ExecutableBuildOptions GetBuildOptions(
                                        ? options.device_ordinal
                                        : default_device_ordinal);
   build_options.set_result_layout(result.xla_output_shape);
+
+  xla::Shape myshape = result.xla_output_shape;
+  std::cout << "*** ExecutableBuildOptions GetBuildOptions" << std::endl;
+  std::cout << "  Input size: " << result.xla_input_shapes.size() << std::endl;
+  for (auto e: result.xla_input_shapes) {
+    std::cout << "    " << e.ToString(true) << std::endl;
+  }
+  xla::ShapeProto myshapep = myshape.ToProto();
+  std::stringstream protosstr;
+  myshapep.SerializeToOstream(&protosstr);
+  std::string protostr = protosstr.str();
+  // std::stringstream sstr(std::string(stringArr,19));
+  std::cout << "  Output_shape: " << std::endl
+    << "    IsArray: " << myshape.IsArray() << std::endl
+    << "    ToString: [" << myshape.ToString(true) << "]" << std::endl
+    << "    Proto: [" << protostr << "]" << std::endl;
+  std::cout << "    Element type: "<< myshape.element_type() << ", S32: " << xla::S32 << std::endl;
+  std::cout << "    Dimensions, size: " << myshape.dimensions_size() << std::endl;
+  for (int i=0; i < myshape.dimensions_size(); i++) {
+    std::cout << "      " << i << ", Dimension: " << myshape.dimensions(i)
+      << ", is_dynamic: " << myshape.is_dynamic_dimension(i) << std::endl;
+  }
+  std::cout << "Tuples" << myshape.tuple_shapes_size() << std::endl;
+  for (int i=0; i < myshape.tuple_shapes_size(); i++) {
+    std::cout << "      " << i << ", Tuple: " << myshape.tuple_shapes(i) << std::endl;
+  }
+  
   build_options.set_device_allocator(options.device_allocator.get());
   build_options.set_alias_passthrough_params(options.alias_passthrough_params);
   build_options.mutable_debug_options()->set_xla_detailed_logging_and_dumping(

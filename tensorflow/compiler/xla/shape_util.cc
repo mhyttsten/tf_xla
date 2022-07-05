@@ -963,6 +963,7 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
    MHTracer_DTPStensorflowPScompilerPSxlaPSshape_utilDTcc mht_51(mht_51_v, 962, "", "./tensorflow/compiler/xla/shape_util.cc", "ShapeUtil::HumanStringWithLayout");
 
   if (shape.IsTuple()) {
+//    std::cout << "ShapeUtil::HumanStringWithLayout: It is a tuple" << std::endl;
     std::string text = "(";
     const auto& tuple_shapes = shape.tuple_shapes();
     for (int64_t i = 0; i < tuple_shapes.size(); ++i) {
@@ -980,12 +981,16 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
   }
   std::string result = HumanString(shape);
   if (IsScalar(shape)) {
+//    std::cout << "ShapeUtil::HumanStringWithLayout: It is a scalar" << std::endl;
+//    std::cout << "ShapeUtil::HumanStringWithLayout, current str: " << result << std::endl;
     std::string layout_str = LayoutUtil::HumanString(shape.layout());
+//    std::cout << "ShapeUtil::HumanStringWithLayout, layout str: " << layout_str << std::endl;
     // Don't print "{}" as layout for scalars.
     if (layout_str != "{}") {
       StrAppend(&result, layout_str);
     }
   } else if (shape.IsArray() && LayoutUtil::HasLayout(shape)) {
+//    std::cout << "ShapeUtil::HumanStringWithLayout: It is not a scalar, but an array with layout" << std::endl;
     StrAppend(&result, LayoutUtil::HumanString(shape.layout()));
   }
   return result;

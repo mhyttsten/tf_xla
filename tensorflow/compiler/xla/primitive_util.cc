@@ -389,8 +389,9 @@ bool IsArrayType(PrimitiveType primitive_type) {
    std::vector<std::string> mht_13_v;
    MHTracer_DTPStensorflowPScompilerPSxlaPSprimitive_utilDTcc mht_13(mht_13_v, 389, "", "./tensorflow/compiler/xla/primitive_util.cc", "IsArrayType");
 
-  return primitive_type != PRIMITIVE_TYPE_INVALID && primitive_type != TUPLE &&
+  bool r = primitive_type != PRIMITIVE_TYPE_INVALID && primitive_type != TUPLE &&
          primitive_type != OPAQUE_TYPE && primitive_type != TOKEN;
+  return r;
 }
 
 // Class to memoize the computation of

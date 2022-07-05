@@ -513,6 +513,8 @@ void XlaLocalLaunchBase::Compute(OpKernelContext* ctx) {
   for (int i = 0; i < resources_.size(); i++) {
     resource_var_ptrs[resources_[i]] = variable_infos[i].var()->tensor();
   }
+
+  // ***
   std::shared_ptr<se::DeviceMemoryAllocator> allocator =
       GetAllocator(ctx->device(), GetStream(ctx), platform_info_);
   XlaComputationLaunchContext launch_context =
