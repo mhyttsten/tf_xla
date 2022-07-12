@@ -70,6 +70,7 @@ Traditional TF build
 */
 
 #include <iostream>
+#include "tensorflow/compiler/xla/client/executable_build_options.h"  // ExecutableBuildOptions
 #include "tensorflow/compiler/xla/service/compiler.h"
 #include "tensorflow/compiler/xla/service/service.h"
 #include "tensorflow/stream_executor/device_memory_allocator.h"  // StreamExecutorMemoryAllocator
@@ -84,26 +85,52 @@ Traditional TF build
 #include "tensorflow/compiler/xla/array.h"
 #include "tensorflow/compiler/xla/shape.h"
 #include "tensorflow/core/platform/statusor.h"
+#include "tensorflow/core/protobuf/error_codes.pb.h"
 #include "tensorflow/compiler/xla/array2d.h"
-
-void printShape(xla::Shape myshape);
 
 using namespace std;
 using namespace tensorflow;
 
-int main(int argc, char* argv[]) {	
+Status PrintShape(const xla::Shape& shape);
+Status PrintProgramShape(const xla::ProgramShape& program_shape);
+Status CreateAndRunProgram(const string&  title, int test_case);
+Status RunProgram(
+  vector<xla::ExecutionInput> execution_inputs,
+  const xla::ExecutableRunOptions& executable_run_options, 
+  unique_ptr<xla::LocalExecutable>& local_executable);
+
+
+//------------------------
+int main(int argc, char* argv[]) {
   cout << "Hello World from XLA directory" << endl;
 
-  se::host::HostPlatform platform; 
-  StatusOr<xla::Compiler*> sorCompiler = xla::Compiler::GetForPlatform(&platform);   
-  if (!sorCompiler.ok()) {
-    cout << "Error, could not get compiler: " << sorCompiler.status() << endl;
-    return -1;
+  Status r = Status::OK();
+  r = CreateAndRunProgram("Executing Sequence", 0);
+  if (!r.ok()) {
+    cout << "Error when executing: " << r << endl;
+  } else {
+     cout << "Execution finished successfully" << endl;
   }
-  cout << "Compiler: " << sorCompiler.status() << endl;
-  xla::Compiler* compiler = sorCompiler.ValueOrDie();
 
-  xla::LocalClientOptions localClientOptions(
+  cout << "Goodbye World from XLA directory" << endl;
+  return 0;
+}
+
+//------------------------
+Status CreateAndRunProgram(const string& title, int test_case) {
+  cout << "***************************************************************************************" << endl;
+  cout << title << ": " << test_case << endl;
+
+  se::host::HostPlatform platform; 
+  StatusOr<xla::Compiler*> sor_compiler = xla::Compiler::GetForPlatform(&platform);   
+  if (!sor_compiler.ok()) {
+    cout << "Error, could not get compiler: " << sor_compiler.status() << endl;
+    return sor_compiler.status();
+  }
+  cout << "Compiler successfully retrieved for platform" << endl;
+  xla::Compiler* compiler = sor_compiler.ValueOrDie();
+
+  xla::LocalClientOptions local_client_options(
     &platform,     // Or use default: se::Platform* platform = nullptr,
     1,             // int number_of_replicas = 1,
     -1,            // int intra_op_parallelism_threads = -1,
@@ -111,228 +138,262 @@ int main(int argc, char* argv[]) {
   );
 
   // nullptr for default platform according to doc
-  localClientOptions = localClientOptions.set_platform(&platform);  // LocalClientOptions::set_platform [210 @ ./tensorflow/compiler/xla/client/client_library.cc]
-
-  // Sets the thread pool size for parallel execution of an individual operator
-  // Not sure what TF sets but lets use default -1
-  localClientOptions = localClientOptions.set_intra_op_parallelism_threads(-1);  // LocalClientOptions::set_intra_op_parallelism_threads [240 @ ./tensorflow/compiler/xla/client/client_library.cc]
+  local_client_options
+    .set_platform(&platform)
+    // Sets the thread pool size for parallel execution of an individual operator, default is -1?
+    .set_intra_op_parallelism_threads(-1)
+  ;
 
   // Set of device IDs for which the stream executor will be created, for the given platform.
-  auto allowedDevices = absl::optional<std::set<int>>{};
-  localClientOptions = localClientOptions.set_allowed_devices(allowedDevices);  // LocalClientOptions::set_allowed_devices [256 @ ./tensorflow/compiler/xla/client/client_library.cc]
+  local_client_options
+    .set_allowed_devices(/*absl::optional<std::set<int>>*/{})
+  ;
 
   // Singleton constructor-or-accessor -- returns a client for the application to issue XLA commands on.
-  StatusOr<xla::LocalClient*> sorLocalClient = xla::ClientLibrary::GetOrCreateLocalClient(localClientOptions);
-  if (!sorLocalClient.ok()) {
-    cout << "Could not create LocalClient: " <<  sorLocalClient.status() << endl;
-    return -1;
+  StatusOr<xla::LocalClient*> sor_local_client = xla::ClientLibrary::GetOrCreateLocalClient(local_client_options);
+  if (!sor_local_client.ok()) {
+    cout << "Could not create LocalClient: " <<  sor_local_client.status() << endl;
+    return sor_local_client.status();
   }
-  cout << "LocalClient: " << sorLocalClient.status() << endl;
-  xla::LocalClient* localClient = sorLocalClient.ValueOrDie();
+  cout << "LocalClient created successfully" << endl;
+  xla::LocalClient* local_client = sor_local_client.ValueOrDie();
 
   // A convenient interface for building up computations.
-  xla::XlaBuilder xlaBuilder{"__inference_return1_5<LB>_XlaMustCompile=true,config_proto=3175580994766145631,executor_type=11160318154034397263<RB>"};
-  Status sXLABuilder = xlaBuilder.GetCurrentStatus();
-  if (!sXLABuilder.ok()) {
-    cout << "Could not create XlaBuilder: " << sXLABuilder << endl;
-    return -1;
+  // xla::XlaBuilder xlaBuilder{"__inference_return1_5<LB>_XlaMustCompile=true,config_proto=3175580994766145631,executor_type=11160318154034397263<RB>"};
+  xla::XlaBuilder xla_builder{"UniqueNameHere"};
+  Status s_xla_builder = xla_builder.GetCurrentStatus();
+  if (!s_xla_builder.ok()) {
+    cout << "Could not create XlaBuilder: " << s_xla_builder << endl;
+    return s_xla_builder;
   }
-  cout << "XlaBuilder: " << sXLABuilder << endl;
+  cout << "XlaBuilder created successfully" << endl;
 
-  // Based on CreateConstantFromScalar (/tf/compiler/xla/tests/client_library_test_base.h)
-  xla::Literal r1Literal = xla::LiteralUtil::CreateR0<int>(1);
-  xla::LiteralSlice r1LiteralSlice = xla::LiteralSlice(r1Literal);
-  xla::XlaOp r1 = ConstantLiteral(&xlaBuilder, r1LiteralSlice);
-  
-  xla::Literal r2Literal = xla::LiteralUtil::CreateR0<int>(2);
-  xla::LiteralSlice r2LiteralSlice = xla::LiteralSlice(r2Literal);
-  xla::XlaOp r2 = ConstantLiteral(&xlaBuilder, r2LiteralSlice);
+  cout << "Now creating operations" << endl;
+  xla::XlaComputation computation_add = xla::CreateScalarAddComputation(
+    /*primitive_type=*/xla::S32,  // Signed int 32 bytes (int32_t)
+    &xla_builder);
 
-  xla::Literal r3Literal = xla::LiteralUtil::CreateR2FromArray2D((const xla::Array2D<int>){{1,2,3},{4,5,6}});
-  xla::LiteralSlice r3LiteralSlice = xla::LiteralSlice(r3Literal);
-  xla::XlaOp r3 = ConstantLiteral(&xlaBuilder, r3LiteralSlice);
+  // Constant scalar with value 1
+  xla::Literal r1_literal = xla::LiteralUtil::CreateR0<int>(1);
+  xla::LiteralSlice r1_literal_slice = xla::LiteralSlice(r1_literal);
+  xla::XlaOp operand_constant_1 = ConstantLiteral(&xla_builder, r1_literal_slice);  
 
-  xla::XlaComputation addComputation = xla::CreateScalarAddComputation(
-    xla::S32,  // Primitive type,
-    &xlaBuilder);
+  // Constant 2D array
+  xla::Literal r2_literal = xla::LiteralUtil::CreateR2FromArray2D((const xla::Array2D<int>){{1,2,3},{4,5,6}});
+  xla::LiteralSlice r2_literal_slice = xla::LiteralSlice(r2_literal);
+  xla::XlaOp operand_constant_array2d = ConstantLiteral(&xla_builder, r2_literal_slice);
 
-  // xla::XlaOp addOp = xla::Reduce(
-  //   &xlaBuilder,
-  //   (absl::Span<const xla::XlaOp>){r1, r2},  // operands
-  //   (absl::Span<const xla::XlaOp>){r1, r2},  // init_values
-  //   addComputation,                          // computation
-  //   (absl::Span<const int64_t>){}           // dimensions_to_reduce
-  // );
-
-  xla::XlaOp addOp = xla::Reduce(
-    &xlaBuilder,
-    (absl::Span<const xla::XlaOp>){r3},  // operands
-    (absl::Span<const xla::XlaOp>){r2},  // init_values
-    addComputation,                          // computation
-    (absl::Span<const int64_t>){1}           // dimensions_to_reduce
+  // Reduce operation of constant 2D array, adding constant scalar (1) to each dimension reduced
+  xla::XlaOp operation_reduce = xla::Reduce(
+    &xla_builder,
+    /*operands=*/{operand_constant_array2d},
+    /*init_values=*/{operand_constant_1},
+    /*computation=*/computation_add,
+    /*dimensions_to_reduce=*/{0}  // Results. 1 (row-based): [7, 16]. 0 (col-based): [6, 8, 10]
   );
 
-  {
-    cout << endl << "*******" << endl << "ProgramShape" << endl;
-  StatusOr<xla::ProgramShape> sorProgramShape = xlaBuilder.GetProgramShape();
-  xla::ProgramShape& programShape = sorProgramShape.ValueOrDie();
-  cout << "ProgramShape: " << programShape.ToString() << endl;
-  xla::ProgramShapeProto programShapeProto = programShape.ToProto();
-  string programShapeProtoStr;
-  // https://pages.cs.wisc.edu/~starr/bots/Undermind-src/html/classgoogle_1_1protobuf_1_1io_1_1ZeroCopyOutputStream.html
-  google::protobuf::io::StringOutputStream programShapeProtoOS(&programShapeProtoStr);
-  bool success = google::protobuf::TextFormat::Print(programShapeProto, &programShapeProtoOS);
-  cout << "ProgramShapeProto3: " << success << ", str: " << programShapeProtoStr << endl;
-  cout << endl;
-}
+  // Parameter of shape S32[3], using f/compiler/xla/shape_utils.h
+  xla::Shape operand_param_array1d_shape = xla::ShapeUtil::MakeShape(xla::S32, {3});
+  xla::XlaOp operand_param_array1d = Parameter(
+    &xla_builder,
+    /*int64_t parameter_number=*/0,
+    /*const shape& shape=*/operand_param_array1d_shape,
+    /*const std::string& name=*/"array_to_reduce");
+
+  // Map operation
+  xla::XlaOp operation_map = xla::Map(
+     &xla_builder,
+     {operation_reduce, operand_param_array1d},
+     computation_add,
+     {0}
+  );
+
+  // Print the program shape
+  StatusOr<xla::ProgramShape> sor_program_shape = xla_builder.GetProgramShape();
+  if (!sor_program_shape.ok()) {
+    cout << "Could not retrieve program shape" << endl;
+    return sor_program_shape.status();
+  }
+  Status program_shape_status = PrintProgramShape(sor_program_shape.ValueOrDie());
+  xla::Shape program_result_layout = xla_builder.GetProgramShape().ValueOrDie().result();
   
   // Build the computation
-  StatusOr<xla::XlaComputation> sorBuild = xlaBuilder.Build(
-    addOp,   // XlaOp root
-    false);  // bool remove_dynamic_dimensions = false);
-  if (!sorBuild.ok()) {
-    cout << "XlaBuilder.Build failed: " << sorBuild.status() << endl;\   
-    return -1;
+  StatusOr<xla::XlaComputation> sor_build = xla_builder.Build();
+  if (!sor_build.ok()) {
+    cout << "Error during XlaBuilder::Build: " << sor_build.status() << endl;
+    return sor_build.status();
   }
-  cout << "XlaBuilder::Build: " << sorBuild.status() << endl;
-  xla::XlaComputation& xlaComputation = sorBuild.ValueOrDie();
-
-
-  // After XlaBuilder::Build it is illegal to get program shape
+  cout << "XlaBuilder::Build: succesfull" << endl;
+  xla::XlaComputation& xla_computation = sor_build.ValueOrDie();
+  // PrintProgramShape, xla_builder.GetProgramShape() is illegal after XlaBuilder::Build 
 
   // Set the executable build options
-  xla::ExecutableBuildOptions executableBuildOptions;
-  int deviceOrdinal = localClient->default_device_ordinal(); 
-  executableBuildOptions.set_device_ordinal(deviceOrdinal);
-  xla::Shape resultShape = xla::ShapeUtil::MakeShape(xla::S32, {2});
-  // cout << "Result shape: " << resultShape.ToString() << endl;
-  // printShape(resultShape);
-  executableBuildOptions.set_result_layout(resultShape);
+  xla::ExecutableBuildOptions executable_build_options;  // tf/compiler/xla/client/executable_build_options.h
+  int device_ordinal = local_client->default_device_ordinal(); 
+  executable_build_options.set_device_ordinal(device_ordinal);
+  executable_build_options.set_result_layout(program_result_layout);
   // exeutableBuildOptions.set_device_allocator();
   // executableBuildOptions.mutable_debug_options()->set_xla_detailed_logging_and_dumping(options.detailed_logging);
 
-  // Compile local executables
-  StatusOr<std::vector<std::unique_ptr<xla::LocalExecutable>>> sorLocalExecutables =
-    localClient->Compile(
-      xlaComputation,
-      {},
-      executableBuildOptions);
-  if (!sorLocalExecutables.ok()) {
-    cout << "Compiling local executables failed: " << sorLocalExecutables.status() << endl;
-    return -1;
-
+  // Compile local executable
+  StatusOr<std::vector<std::unique_ptr<xla::LocalExecutable>>> sor_local_executables =
+    local_client->Compile(
+      xla_computation,
+      /*const absl::Span<const Shape* const> argument_layouts=*/{&operand_param_array1d_shape},
+      executable_build_options);
+  if (!sor_local_executables.ok()) {
+    cout << "Error LocalClient::Compiler failed: " << sor_local_executables.status() << endl;
+    return sor_local_executables.status();
   }
-  cout << "Local executables: " << sorLocalExecutables.status() << endl;
- 
-  std::vector<std::unique_ptr<xla::LocalExecutable>>& localExecutables = sorLocalExecutables.ValueOrDie();
-  cout << "Number of executables: " << localExecutables.size() << endl;
-  std::unique_ptr<xla::LocalExecutable>& localExecutable = localExecutables[0];
+  cout << "LocalClient::Compile successful" << endl;
+  std::vector<std::unique_ptr<xla::LocalExecutable>>& local_executables = sor_local_executables.ValueOrDie();
+  cout << "Number of executables: " << local_executables.size() << endl;
+  if (local_executables.size() != 1) {
+    cout << "Error, was expecting one local executables" << endl;
+    return Status(tensorflow::error::NOT_FOUND, ">1 executables was unexpected");  // tf/core/protobuf/error_codes.pb.h
+  }
+  std::unique_ptr<xla::LocalExecutable>& local_executable = local_executables[0];
+  cout << "Retrieved a single target executable, as expected" << endl;
 
-  // StreamExecutor manages a single device, in terms of executing work 
-  //   class StreamExecutor (tf/stream_executor/stream_executor_pimpl.h)
-  //     port::Status Init(DeviceOptions device_options);
+  // Create the stream executor
+  se::PluginConfig plugin_config;  // Use the defaults
+  std::unique_ptr<se::internal::StreamExecutorInterface> stream_executor_impl(new se::host::HostExecutor(plugin_config));
+  se::StreamExecutor stream_executor(&platform, std::move(stream_executor_impl), device_ordinal);
+  se::StreamExecutorMemoryAllocator memory_allocator(&stream_executor);
 
-  // Base class
-  //     DeviceMemoryAllocator [Abstract] (tf/se/device_memory_allocator.h)
-  //
-  // Implementing classes
-  //
-  //   1a. StreamExecutorMemoryAllocator : DeviceMemoryAllocator (tf/se/device_memory_allocator.h)
-  //      Default memory allocator for a platform which use StreamExecutor::Allocate/Deallocate
-  //      StreamExecutorMemoryAllocator(StreamExecutor*)
-  //
-  //    b. StreamExecutor (tf/se/stream_executor_pimpl.h)
-  //      Manages execution of work on a single device, in terms of executing work (kernel launches and memory management 
-  //      Takes a StreamExecutorInterface at construction as implementation (e.g. if it's a CUDA or OpenCL executor)
-  //      - StreamExecutor(const Platform*, std::unique_ptr<internal::StreamExecutorInterface>, int device_ordinal);
-  //      OBS these methods will proxy to implementation class
-  //      - port::Status Init()  // Uses DeviceOptions::Default()
-  //      - port::Status Init(DeviceOptions device_options)
-  //
-  //    c. StreamExecutorInterface [abstract] (tf/se/stream_executor_internal.h)
-  //      Interface for the different StreamExecutor platforms (i.e. CUDA, OpenCL).
-  //
-  //      1. XlaInterpreterExecutor (tf/compiler/xla/service/interpreter/executor.h)
-  //         A CPU-only implementation of the StreamExecutor interface.
-  //         Used for testing and to examine the performance of host-based StreamExecutor code.
-  //         - XlaInterpreterExecutor(const PluginConfig &);
-  //         - port::Status Init(int device_ordinal, DeviceOptions);
-  // 
-  //      2. GpuExecutor(const PluginConfig&) (tf/se/gpu/gpu_executor.h)
-  //         The CUDA implementation of the StreamExecutorInterface functionality.
-  //         StreamExecutor basically correspond to the CUDA streams programming model provided by the
-  //         libcuda.so driver APIs, so we don't have to do much more than wrap the calls to the libraries appropriately.
-  //         - GpuExecutor(const PluginConfig&)
-  //         - port::Status Init(int device_ordinal, DeviceOptions);
-  //
-  //      3. HostExecutor (tf/se/host/host_gpu_executor.h)
-  //         A CPU-only implementation of StreamExecutor, that does no communication or interaction with a device.  
-  //         Used for testing and to examine the performance of host-based StreamExecutor code.
-  //         - HostExecutor (const PluginConfig&);
-  //         - port::Status Init(int device_ordinal, DeviceOptions device_options) override;
-  //
-  //   2. Adapter class that wraps a Tensorflow allocator. 
-  //     TfAllocatorAdapter(tf::Allocator *wrapped, Stream *stream) (tf/se/tf_allocator_adapter.h)
-
-  se::PluginConfig pluginConfig;  // Use the defaults
-  std::unique_ptr<se::internal::StreamExecutorInterface> streamExecutorImpl(new se::host::HostExecutor(pluginConfig));
-  se::StreamExecutor streamExecutor(&platform, std::move(streamExecutorImpl), deviceOrdinal);
-  se::StreamExecutorMemoryAllocator memoryAllocator(&streamExecutor);
-
+  // Create run options
   xla::ExecutableRunOptions executable_run_options;
   executable_run_options
-    .set_allocator(&memoryAllocator)  // Argument is (se::DeviceMemoryAllocator*)
+    .set_allocator(&memory_allocator)  // Argument is (se::DeviceMemoryAllocator*)
     .set_rng_seed(42);  // Hardcoding since sample, extensive algorithm here: /tf/compiler/xla/executable_run_options.h
-  //  executable_run_options.set_run_id();
+  //  executable_run_options.set_run_id();  // what is this
   //  executable_run_options.set_stream();
   //  executable_run_options.set_intra_op_thread_pool();
 
-  // Run the compiled computation with the given arguments and options and return the result.
-  // StatusOr<ScopedShapedBuffer> Run(const absl::Span<const ShapedBuffer* const> arguments, ExecutableRunOptions run_options);
-  // StatusOr<ExecutionOutput>    Run(std::vector<ExecutionInput> arguments, ExecutableRunOptions run_options);
-  StatusOr<xla::ScopedShapedBuffer> sorScopedShapedBuffer = localExecutable->Run(
-      (absl::Span<const xla::ShapedBuffer* const>){},  // const absl::Span<const ShapedBuffer* const> arguments,
-      executable_run_options);  // xla::ExecutableRunOptions run_options);
-  if (!sorScopedShapedBuffer.ok()) {
-    cout << "Run failed: " << sorScopedShapedBuffer.status() << endl;
-    return -1;
+  // Run our program repeatedly, changing the input parameter across runs
+  for (int i=0; i < 10000; i++) {
+    cout << "--------------" << endl << "Execution Run: " << i << endl;
+    xla::ExecutionInput execution_input(operand_param_array1d_shape);
+    int argument_1[] = {5+i, 6+i, 7+i};
+    se::DeviceMemoryBase device_memory = se::DeviceMemory<int*>::MakeFromByteSize(argument_1, sizeof(argument_1));
+    execution_input.SetUnownedBuffer(
+      xla::ShapeIndex{},
+      xla::MaybeOwningDeviceMemory(device_memory));
+    vector<xla::ExecutionInput> execution_inputs;
+    execution_inputs.push_back(std::move(execution_input)); 
+    Status s_run_program = RunProgram(std::move(execution_inputs), executable_run_options, local_executable);
+    if (!s_run_program.ok()) {
+      cout << "Error on run: " << i << ", message: " << s_run_program << endl;
+      return s_run_program;
+    }
   }
-  cout << "Run successful: " << sorScopedShapedBuffer.status() << endl;
-  xla::ScopedShapedBuffer& scopedShapedBuffer = sorScopedShapedBuffer.ValueOrDie();
-  cout << "ShapedBuffer.ToString: " << scopedShapedBuffer.ToString() << endl;
-  cout << "Streaming ShapedBuffer to cout" << endl;
-  cout << scopedShapedBuffer << endl;
 
-  se::DeviceMemoryBase rootBuffer = scopedShapedBuffer.root_buffer();
-  se::DeviceMemory<int> deviceMemory(rootBuffer);
+  return Status::OK();
+}
 
-  cout << "DeviceMemory" << endl
-    << "  ElementCount: " << deviceMemory.ElementCount() << endl
-    << "  IsScalar: " << deviceMemory.IsScalar() << endl;
+//------------------------
+Status RunProgram(
+  vector<xla::ExecutionInput> execution_inputs,
+  const xla::ExecutableRunOptions& executable_run_options, 
+  std::unique_ptr<xla::LocalExecutable>& local_executable) {
 
-  int* r = (int*)rootBuffer.opaque();
-  cout << "Now de-referencing result pointer" << endl;
-  cout << "Result:, r0: " << r[0] << ", r1: " << r[1] << endl;
+  cout << "Next statement will Run the LocalExecutable" << endl;
 
+  StatusOr<xla::ExecutionOutput> sor_execution_output = local_executable->Run(
+    std::move(execution_inputs),
+    executable_run_options);
+  if (!sor_execution_output.ok()) {
+    cout << "LocalExecutable::Run failed: " << sor_execution_output.status() << endl;
+    return sor_execution_output.status();
+  }
+  cout << "Run was successful: " << sor_execution_output.status() << endl;
+  xla::ExecutionOutput& execution_output = sor_execution_output.ValueOrDie();
+  const xla::ScopedShapedBuffer& scoped_shaped_buffer = execution_output.Result();
+  cout << "Resulting ShapedBuffer.ToString: " << scoped_shaped_buffer.ToString();
 
-  // ShapedBuffer (tf/compiler/xla/service/shaped_buffer.h)
-  //    const Shape& on_host_shape()
-  //    const Shape& on_device_shape()
-  //    const se::DeviceMemoryBase& root_buffer()
-  //    const se::DeviceMemoryBase& buffer(const ShapeIndex& index)  // Buffer at ShapeUtil::GetSubshape index 
-  //    const ShapeTree<se::DeviceMemoryBase>& buffers()  // Returns ShapeTree containing all the device addresses in ShapedBuffer
-  //    
-  // ScopedShapedBuffer : ShapedBuffer (tf/compiler/xla/service/shaped_buffer.h)
-  //    se::DeviceMemoryAllocator* memory_allocator()
+  se::DeviceMemoryBase root_buffer = scoped_shaped_buffer.root_buffer();
+  se::DeviceMemory<int> device_memory(root_buffer);
+  cout << "DeviceMemory, ElementCount: " << device_memory.ElementCount()
+    << ", IsScalar: " << device_memory.IsScalar() << endl;
 
+  cout << "Result: ";
+  int* r = static_cast<int*>(root_buffer.opaque());
+  for (int i=0; i < device_memory.ElementCount(); i++) {
+    cout << *(r+i);
+    if (i+1 < device_memory.ElementCount()) {
+      cout << ", ";
+    }
+  }
+  cout << endl;
 
+  return Status::OK();
+}
+
+//------------------------
+Status PrintProgramShape(const xla::ProgramShape& program_shape) {
+  cout << "ProgramShape.ToString: " << program_shape.ToString() << endl;
+  xla::ProgramShapeProto program_shape_proto = program_shape.ToProto();
+  string program_shape_proto_str;
+  // https://pages.cs.wisc.edu/~starr/bots/Undermind-src/html/classgoogle_1_1protobuf_1_1io_1_1ZeroCopyOutputStream.html
+  google::protobuf::io::StringOutputStream program_shape_proto_ostr(&program_shape_proto_str);
+  bool success = google::protobuf::TextFormat::Print(program_shape_proto, &program_shape_proto_ostr);
+  if (success) {
+    cout << "ProgramShapeProto, success: " << success << ", String: [" << program_shape_proto_str << "]" << endl;
+  } else {
+    cout << "Error: Could not successfully Print ProgramShapeProto" << endl;
+  }
+  return Status::OK();
+}
+
+//------------------------
+Status PrintShape(const xla::Shape& shape) {
+
+ // tf/compiler/xla/shape_utils.h is great
 
 /*
-XlaComputationLaunchContext::PopulateInputs [1] [] [] [ 452 @ ./tensorflow/compiler/jit/xla_launch_util.cc]
-num_elements [1] [] [] [ 687 @ ./tensorflow/compiler/xla/array.h]
-Array [1] [] [] [ 268 @ ./tensorflow/compiler/xla/array.h]
-Array2D [1] [] [] [ 209 @ ./tensorflow/compiler/xla/array2d.h]
+  // Creates an opaque shape. These are generally used for threading a context
+  // into a custom operation.
+  static Shape MakeOpaqueShape();
 
+  // Creates a token shape. Values of this shape are used for ordering
+  // side-effecting operations.
+  static Shape MakeTokenShape();
+*/
+
+  cout << "*** XLATesting.printShape" << endl;
+
+  stringstream proto_sstr;
+  xla::ShapeProto shape_proto = shape.ToProto();
+  shape_proto.SerializeToOstream(&proto_sstr);
+  string proto_str = proto_sstr.str();
+  // std::stringstream sstr(std::string(stringArr,19));
+
+  cout << "  ToString: [" << shape.ToString(true) << "]" << endl
+    << "  Proto: [" << proto_str << "]" << endl;
+  cout << "  element_type: "<< shape.element_type() << " (S32 is: " << xla::S32 << ")" << endl;
+  cout << "  rank: " << shape.rank() << endl;
+  cout << "  is_static: " << shape.is_static() << endl;
+  cout << "  is_dynamic: " << shape.is_dynamic() << endl;
+  cout << "  has_layout: " << shape.has_layout() << endl;
+  cout << "  IsInteger: " << shape.IsInteger() << endl;
+  cout << "  IsArray: " << shape.IsArray() << endl;
+  cout << "  IsTuple: " << shape.IsTuple() << endl;
+  cout << "  IsToken: " << shape.IsToken() << endl;
+  cout << "  IsOpaque: " << shape.IsOpaque() << endl;
+  cout << "  dimensions_size: " << shape.dimensions_size() << endl;
+  for (int i=0; i < shape.dimensions_size(); i++) {
+    cout << "    " << i << ", dimension: " << shape.dimensions(i)
+      << ", is_dynamic: " << shape.is_dynamic_dimension(i) << endl;
+  }
+  cout << "  tuple_shapes_size: " << shape.tuple_shapes_size() << endl;
+  for (int i=0; i < shape.tuple_shapes_size(); i++) {
+    cout << "    " << i << ", tuple_shapes.ToString: " << shape.tuple_shapes(i).ToString() << endl;
+  }
+
+
+}
+
+/*
 DeviceAssignment [1] [] [] [ 210 @ ./tensorflow/compiler/xla/service/computation_placer.h]
 RunId::RunId [1] [] [] [ 191 @ ./tensorflow/compiler/xla/executable_run_options.cc]
 RunId [1] [] [] [ 224 @ ./tensorflow/compiler/xla/executable_run_options.h]
@@ -346,13 +407,6 @@ LocalExecutable::Run [1] [] [] [ 371 @ ./tensorflow/compiler/xla/client/local_cl
 
 ConsumeResult [1] [] [] [ 436 @ ./tensorflow/compiler/xla/service/executable.h]
 XlaComputationLaunchContext::PopulateOutputs [1] [] [] [ 671 @ ./tensorflow/compiler/jit/xla_launch_util.cc]
-*/
-
-
-
-/*
-XlaComputation::GetProgramShape [1] [] [] [ 195 @ ./tensorflow/compiler/xla/client/xla_computation.cc]
-result [1] [] [] [ 643 @ ./tensorflow/compiler/xla/shape.h]
 
 XlaCompilationCache::BuildExecutable [1] [] [] [ 477 @ ./tensorflow/compiler/jit/xla_compilation_cache.cc]
    LocalClient::default_device_ordinal [1] [] [] [ 558 @ ./tensorflow/compiler/xla/client/local_client.cc]
@@ -368,47 +422,7 @@ is_on_xla_device [1] [] [] [ 250 @ ./tensorflow/compiler/jit/xla_platform_info.h
 executable [1] [] [] [ 247 @ ./tensorflow/compiler/xla/client/local_client.h]
 module [1] [] [] [ 621 @ ./tensorflow/compiler/xla/service/executable.h]
 input_output_alias_config [1] [] [] [ 542 @ ./tensorflow/compiler/xla/service/hlo_module.h]
-*/
 
-  cout << "Goodbye World from XLA directory" << endl;
-  return 0;
-}
-
-//------------------------
-void printShape(xla::Shape shape) {
-
-  std::cout << "*** XLATesting.printShape" << std::endl;
-
-  std::stringstream proto_sstr;
-  xla::ShapeProto shape_proto = shape.ToProto();
-  shape_proto.SerializeToOstream(&proto_sstr);
-  std::string proto_str = proto_sstr.str();
-  // std::stringstream sstr(std::string(stringArr,19));
-
-  cout << "  ToString: [" << shape.ToString(true) << "]" << std::endl
-    << "  Proto: [" << proto_str << "]" << std::endl;
-  std::cout << "  element_type: "<< shape.element_type() << " (S32 is: " << xla::S32 << ")" << std::endl;
-  std::cout << "  rank: " << shape.rank() << std::endl;
-  std::cout << "  is_static: " << shape.is_static() << std::endl;
-  std::cout << "  is_dynamic: " << shape.is_dynamic() << std::endl;
-  std::cout << "  has_layout: " << shape.has_layout() << std::endl;
-  std::cout << "  IsInteger: " << shape.IsInteger() << std::endl;
-  std::cout << "  IsArray: " << shape.IsArray() << std::endl;
-  std::cout << "  IsTuple: " << shape.IsTuple() << std::endl;
-  std::cout << "  IsToken: " << shape.IsToken() << std::endl;
-  std::cout << "  IsOpaque: " << shape.IsOpaque() << std::endl;
-  std::cout << "  dimensions_size: " << shape.dimensions_size() << std::endl;
-  for (int i=0; i < shape.dimensions_size(); i++) {
-    std::cout << "    " << i << ", dimension: " << shape.dimensions(i)
-      << ", is_dynamic: " << shape.is_dynamic_dimension(i) << std::endl;
-  }
-  std::cout << "  tuple_shapes_size: " << shape.tuple_shapes_size() << std::endl;
-  for (int i=0; i < shape.tuple_shapes_size(); i++) {
-    std::cout << "    " << i << ", tuple_shapes.ToString: " << shape.tuple_shapes(i).ToString() << std::endl;
-  }
-}
-
-/*
 // NoOp
 SetOpMetadata [1] [] [] [ 379 @ ./tensorflow/compiler/xla/client/xla_builder.h]
 frontend_attributes [1] [] [] [ 444 @ ./tensorflow/compiler/xla/client/xla_builder.h]
@@ -475,6 +489,59 @@ XlaComputation [1] [] [] [ 200 @ ./tensorflow/compiler/xla/client/xla_computatio
 
 /*
 NOTES
+
+  // StreamExecutor manages a single device, in terms of executing work 
+  //   class StreamExecutor (tf/stream_executor/stream_executor_pimpl.h)
+  //     port::Status Init(DeviceOptions device_options);
+  //
+  // Base class
+  //     DeviceMemoryAllocator [Abstract] (tf/se/device_memory_allocator.h)
+  //
+  // Implementing classes
+  //
+  //   1a. StreamExecutorMemoryAllocator : DeviceMemoryAllocator (tf/se/device_memory_allocator.h)
+  //      Default memory allocator for a platform which use StreamExecutor::Allocate/Deallocate
+  //      StreamExecutorMemoryAllocator(StreamExecutor*)
+  //
+  //    b. StreamExecutor (tf/se/stream_executor_pimpl.h)
+  //      Manages execution of work on a single device, in terms of executing work (kernel launches and memory management 
+  //      Takes a StreamExecutorInterface at construction as implementation (e.g. if it's a CUDA or OpenCL executor)
+  //      - StreamExecutor(const Platform*, std::unique_ptr<internal::StreamExecutorInterface>, int device_ordinal);
+  //      OBS these methods will proxy to implementation class
+  //      - port::Status Init()  // Uses DeviceOptions::Default()
+  //      - port::Status Init(DeviceOptions device_options)
+  //
+  //    c. StreamExecutorInterface [abstract] (tf/se/stream_executor_internal.h)
+  //      Interface for the different StreamExecutor platforms (i.e. CUDA, OpenCL).
+  //
+  //      1. XlaInterpreterExecutor (tf/compiler/xla/service/interpreter/executor.h)
+  //         A CPU-only implementation of the StreamExecutor interface.
+  //         Used for testing and to examine the performance of host-based StreamExecutor code.
+  //         - XlaInterpreterExecutor(const PluginConfig &);
+  //         - port::Status Init(int device_ordinal, DeviceOptions);
+  // 
+  //      2. GpuExecutor(const PluginConfig&) (tf/se/gpu/gpu_executor.h)
+  //         The CUDA implementation of the StreamExecutorInterface functionality.
+  //         StreamExecutor basically correspond to the CUDA streams programming model provided by the
+  //         libcuda.so driver APIs, so we don't have to do much more than wrap the calls to the libraries appropriately.
+  //         - GpuExecutor(const PluginConfig&)
+  //         - port::Status Init(int device_ordinal, DeviceOptions);
+  //
+  //      3. HostExecutor (tf/se/host/host_gpu_executor.h)
+  //         A CPU-only implementation of StreamExecutor, that does no communication or interaction with a device.  
+  //         Used for testing and to examine the performance of host-based StreamExecutor code.
+  //         - HostExecutor (const PluginConfig&);
+  //         - port::Status Init(int device_ordinal, DeviceOptions device_options) override;
+  //
+  //   2. Adapter class that wraps a Tensorflow allocator. 
+  //     TfAllocatorAdapter(tf::Allocator *wrapped, Stream *stream) (tf/se/tf_allocator_adapter.h)
+
+//-------------
+
+
+
+
+
 
 LocalClient : Client (tf/compiler/xla/client/local_client.h)
 LocalExecutable (tf/compiler/xla/client/local_client.h)

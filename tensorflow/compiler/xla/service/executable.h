@@ -294,6 +294,7 @@ class ExecutionInput {
                         MaybeOwningDeviceMemory buffer);
 
   void SetUnownedIndex(const ShapeIndex& index) {
+    std::cout << "ExecutionInput::SetUnownedIndex with 1 argument" << std::endl;
    std::vector<std::string> mht_7_v;
    MHTracer_DTPStensorflowPScompilerPSxlaPSservicePSexecutableDTh mht_7(mht_7_v, 297, "", "./tensorflow/compiler/xla/service/executable.h", "SetUnownedIndex");
 
