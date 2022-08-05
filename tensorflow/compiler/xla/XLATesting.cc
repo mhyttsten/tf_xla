@@ -69,6 +69,35 @@ Traditional TF build
    python3.9 -m pip install --force-reinstall /tmp/tensorflow_pkg/*.whl   
 */
 
+/*
+Next:
+   - Output files
+      Check output files
+      Can we disable compiler passes, e.g. constant folding? How are passes decided?
+      What part of constant folding performs our change, print it
+   - Look at a pass, and how to write your own pass and add it?
+   - How to take HLO proto and run our program?
+   - Creatig your own backend
+   - Additional flags throughout the entire thing
+   - GPUs and other devices and copying memory etc
+   - SPMD and other distribution mechanisms
+
+Notes
+  - HLO output
+    export XLA_FLAGS=--xla_dump_to=./output  # Before running will create output with debug files
+    Use $ ls -lrt  # Displays file in cretion order (oldest first)
+       ($ ls --full-time  # May on Unix system give time resolution more granular than seconds)
+    File creation order (from function call WriteStringToFile): 
+       1. "/tmp/xla_output/module_0000.UniqueNameHere.14.before_optimizations.txt"
+       2. "/tmp/xla_output/module_0000.UniqueNameHere.14.cpu_after_optimizations.txt"
+       3. "/tmp/xla_output/module_0000.UniqueNameHere.14.cpu_after_optimizations-buffer-assignment.txt"
+       3. "/tmp/xla_output/module_0000.UniqueNameHere.14.ir-no-opt.ll"
+       4. "/tmp/xla_output/module_0000.UniqueNameHere.14.ir-no-opt-noconst.ll"
+       5. "/tmp/xla_output/module_0000.UniqueNameHere.14.ir-with-opt.ll"
+       7. "/tmp/xla_output/module_0000.UniqueNameHere.14.ir-with-opt-noconst.ll"
+       8. "/tmp/xla_output/module_0000.UniqueNameHere.14.o"
+*/
+
 #include <iostream>
 #include "tensorflow/compiler/xla/client/executable_build_options.h"  // ExecutableBuildOptions
 #include "tensorflow/compiler/xla/service/compiler.h"
@@ -87,6 +116,7 @@ Traditional TF build
 #include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/protobuf/error_codes.pb.h"
 #include "tensorflow/compiler/xla/array2d.h"
+#include "tensorflow/compiler/xla/xla_data.pb.h"  // Defines PrimitiveType
 
 using namespace std;
 using namespace tensorflow;
@@ -236,6 +266,34 @@ Status CreateAndRunProgram(const string& title, int test_case) {
   // executableBuildOptions.mutable_debug_options()->set_xla_detailed_logging_and_dumping(options.detailed_logging);
 
   // Compile local executable
+  // Here is where majority of things happen
+  // *** Todo: Where is CPU involved in all of this
+ 
+  // LocalClient::Compile
+  //    LocalService::CompileExecutables
+  //       Service::BuildExecutable
+  //          HloModule::CreateFromProto
+  //          HloVerifier::Run
+  //          DumpHloModuleIfEnabled name: "before_optimizations" 941 @ ./tensorflow/compiler/xla/service/dump.cc
+  //          compiler 260 @ ./tensorflow/compiler/xla/service/backend.h
+  //          // CpuCompiler::RunHloPasses runs majority ~100k lines of trace code
+  //          CpuCompiler::RunHloPasses 1042 @ ./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc
+  //             config [1] [] [] [ 450 @ ./tensorflow/compiler/xla/service/hlo_module.h]
+  //             CompilerTargetOptions [1] [] [] [ 914 @ ./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc]
+  //             config [1] [] [] [ 450 @ ./tensorflow/compiler/xla/service/hlo_module.h]
+  //             CodeGenOptLevel [1] [] [] [ 924 @ ./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc]
+  //                debug_options [1] [] [] [ 427 @ ./tensorflow/compiler/xla/service/hlo_module_config.h]
+  //             SimpleOrcJIT::InferTargetMachineForJIT [1] [] [] [ 247 @ ./tensorflow/compiler/xla/service/cpu/simple_orc_jit.cc]
+  //             // Next line trace ~100k of code
+  //             CpuCompiler::RunHloPasses [1] [] [] [ 885 @ ./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc]
+  //                HloModule::ToProto [1] [] [] [ 492 @ ./tensorflow/compiler/xla/service/hlo_module.cc]  // 
+  //                LLVMTargetMachineFeatures [1] [] [] [ 243 @ ./tensorflow/compiler/xla/service/cpu/target_machine_features.h]
+  //                // Next line trace ~100k of code
+  //                CpuCompiler::RunHloPassesThroughLayoutAssn [1] [] [] [ 631 @ ./tensorflow/compiler/xla/service/cpu/cpu_compiler.cc]
+
+
+
+
   StatusOr<std::vector<std::unique_ptr<xla::LocalExecutable>>> sor_local_executables =
     local_client->Compile(
       xla_computation,
@@ -271,7 +329,8 @@ Status CreateAndRunProgram(const string& title, int test_case) {
   //  executable_run_options.set_intra_op_thread_pool();
 
   // Run our program repeatedly, changing the input parameter across runs
-  for (int i=0; i < 10000; i++) {
+//  for (int i=0; i < 10000; i++) {
+    int i=10;
     cout << "--------------" << endl << "Execution Run: " << i << endl;
     xla::ExecutionInput execution_input(operand_param_array1d_shape);
     int argument_1[] = {5+i, 6+i, 7+i};
@@ -286,7 +345,7 @@ Status CreateAndRunProgram(const string& title, int test_case) {
       cout << "Error on run: " << i << ", message: " << s_run_program << endl;
       return s_run_program;
     }
-  }
+  // }
 
   return Status::OK();
 }
